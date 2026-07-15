@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>DrivePro — Θεωρία Οδήγησης Ελλάδας</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        brand: { 50:'#eef4ff',100:'#dbe6ff',500:'#5b7cff',600:'#4361ee',700:'#3549c0' },
+        ink:   { 900:'#0b1020',800:'#111634',700:'#1a2246' }
+      },
+      fontFamily: { sans: ['Inter','system-ui','sans-serif'] },
+      boxShadow: {
+        soft: '0 6px 24px -8px rgba(15,23,42,.15), 0 2px 6px -2px rgba(15,23,42,.08)',
+        glow: '0 0 0 4px rgba(91,124,255,.18), 0 12px 32px -8px rgba(91,124,255,.35)'
+      },
+      animation: {
+        'pop': 'pop .35s cubic-bezier(.2,1.5,.5,1)',
+        'slide-up': 'slideUp .35s cubic-bezier(.2,.8,.2,1)',
+        'shake': 'shake .4s ease-in-out',
+        'float': 'float 3s ease-in-out infinite',
+        'bounce-slow': 'bounce 1.8s ease-in-out infinite'
+      },
+      keyframes: {
+        pop:      { '0%':{transform:'scale(.85)',opacity:0}, '100%':{transform:'scale(1)',opacity:1} },
+        slideUp:  { '0%':{transform:'translateY(20px)',opacity:0}, '100%':{transform:'translateY(0)',opacity:1} },
+        shake:    { '0%,100%':{transform:'translateX(0)'},'25%':{transform:'translateX(-6px)'},'75%':{transform:'translateX(6px)'} },
+        float:    { '0%,100%':{transform:'translateY(0)'},'50%':{transform:'translateY(-6px)'} }
+      }
+    }
+  }
+};
+</script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+  html,body { -webkit-tap-highlight-color: transparent; }
+  body { background: radial-gradient(1200px 600px at 20% -10%, #dbe6ff 0%, transparent 60%), radial-gradient(900px 500px at 90% 0%, #fce7f3 0%, transparent 55%), #f7f8ff; }
+  .dark body { background: radial-gradient(1200px 600px at 20% -10%, #1a2246 0%, transparent 60%), radial-gradient(900px 500px at 90% 0%, #2b1738 0%, transparent 55%), #0b1020; color: #e5e7eb; }
+  .card { background: white; border-radius: 20px; }
+  .dark .card { background: #111634; color: #e5e7eb; }
+  .btn { transition: all .15s ease; }
+  .btn:active { transform: scale(.97); }
+  .confetti { position: fixed; width:10px; height:14px; top:-20px; pointer-events:none; z-index:9999; border-radius:2px; }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); opacity: 0; } }
+  .ring-track { stroke-dasharray: 283; stroke-dashoffset: 283; transition: stroke-dashoffset 1.2s cubic-bezier(.2,.8,.2,1); }
+  .glass { backdrop-filter: blur(12px); background: rgba(255,255,255,.7); }
+  .dark .glass { background: rgba(17,22,52,.7); }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .opt-btn { transition: all .18s ease; }
+  .opt-btn:hover:not([disabled]) { transform: translateY(-2px); box-shadow: 0 8px 20px -6px rgba(67,97,238,.35); border-color:#5b7cff; }
+  .grad-primary { background: linear-gradient(135deg,#5b7cff,#8b5cf6); }
+  .grad-success { background: linear-gradient(135deg,#10b981,#059669); }
+  .grad-danger  { background: linear-gradient(135deg,#ef4444,#dc2626); }
+  .grad-warn    { background: linear-gradient(135deg,#f59e0b,#d97706); }
+  .grad-info    { background: linear-gradient(135deg,#06b6d4,#0891b2); }
+</style>
+</head>
+<body class="font-sans text-slate-800">
+
+<div id="app"></div>
+
+<!-- Toast container -->
+<div id="toast-root" class="fixed top-4 right-4 z-[10000] flex flex-col gap-2 items-end"></div>
+
+<!-- Modal root -->
+<div id="modal-root"></div>
+
+<script src="questions.js"></script>
+<script>
+/* ========================= STATE ========================= */
+const STORAGE_KEY = 'drivepro_state_v1';
+const defaultState = () => ({
+  user: { name: 'Επισκέπτης', mode: 'guest', avatar: '🧑' },
+  xp: 0, level: 1, coins: 0,
+  totalAnswered: 0, totalCorrect: 0, totalWrong: 0,
+  examsCompleted: 0, perfectExams: 0,
+  streak: 0, lastActiveDay: null, longestStreak: 0,
+  catCorrect: {}, catWrong: {},
+  mastery: {},          // qId -> { level: 'new'|'learning'|'improving'|'mastered', streak: 0, nextDue: ts }
+  mistakes: [],         // qId that user got wrong (queue for mistakes mode)
+  bookmarks: [],        // starred qIds
+  badges: [],           // earned badge ids
+  history: [],          // {date, correct, wrong}
+  responseTimes: [],
+  dailyChallenge: null, // {date, target, progress, done}
+  theme: 'light'
+});
+let S = load();
+function load() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return defaultState();
+    return { ...defaultState(), ...JSON.parse(raw) };
+  } catch { return defaultState(); }
+}
+function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(S)); }
+function reset() { S = defaultState(); save(); route('dashboard'); }
+
+/* ========================= HELPERS ========================= */
+const $ = (s, r=document) => r.querySelector(s);
+const el = (html) => { const t=document.createElement('template'); t.innerHTML=html.trim(); return t.content.firstElementChild; };
+const todayStr = () => new Date().toISOString().slice(0,10);
+const xpForLevel = (lv) => 50 * lv * lv;              // 50, 200, 450, 800...
+const levelForXp = (xp) => { let lv=1; while (xp >= xpForLevel(lv)) lv++; return lv; };
+function toast(msg, kind='info') {
+  const colors = { info:'bg-brand-600', success:'bg-emerald-500', warn:'bg-amber-500', error:'bg-rose-500' };
+  const t = el(`<div class="btn ${colors[kind]} text-white px-4 py-3 rounded-2xl shadow-soft animate-slide-up font-medium">${msg}</div>`);
+  $('#toast-root').appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateY(-8px)'; t.style.transition='all .3s'; setTimeout(()=>t.remove(),300); }, 2400);
+}
+function confetti() {
+  const colors=['#5b7cff','#ec4899','#10b981','#f59e0b','#06b6d4','#8b5cf6'];
+  for (let i=0;i<80;i++){
+    const c=document.createElement('div');
+    c.className='confetti';
+    c.style.left = Math.random()*100+'vw';
+    c.style.background = colors[i%colors.length];
+    c.style.animation = `fall ${2+Math.random()*2}s ${Math.random()*.5}s linear forwards`;
+    c.style.transform = `rotate(${Math.random()*360}deg)`;
+    document.body.appendChild(c);
+    setTimeout(()=>c.remove(),4500);
+  }
+}
+function updateStreak() {
+  const t = todayStr();
+  if (S.lastActiveDay === t) return;
+  if (S.lastActiveDay) {
+    const y = new Date(); y.setDate(y.getDate()-1);
+    const ys = y.toISOString().slice(0,10);
+    S.streak = (S.lastActiveDay === ys) ? S.streak + 1 : 1;
+  } else S.streak = 1;
+  S.lastActiveDay = t;
+  if (S.streak > S.longestStreak) S.longestStreak = S.streak;
+  ensureDailyChallenge();
+  save();
+}
+function ensureDailyChallenge() {
+  const t = todayStr();
+  if (!S.dailyChallenge || S.dailyChallenge.date !== t) {
+    const targets = [
+      { type: 'answer', target: 20, label: 'Απάντησε σε 20 ερωτήσεις σήμερα' },
+      { type: 'correct', target: 15, label: 'Πέτυχε 15 σωστές απαντήσεις' },
+      { type: 'exam', target: 1, label: 'Ολοκλήρωσε 1 προσομοίωση εξέτασης' },
+      { type: 'accuracy', target: 90, label: 'Πέτυχε 90%+ ακρίβεια σε ένα set' }
+    ];
+    S.dailyChallenge = { date: t, progress: 0, done: false, ...targets[Math.floor(Math.random()*targets.length)] };
+  }
+}
+function checkBadges() {
+  const gained = [];
+  for (const b of window.BADGES) {
+    if (!S.badges.includes(b.id) && b.req(S)) {
+      S.badges.push(b.id);
+      gained.push(b);
+    }
+  }
+  if (gained.length) {
+    save();
+    setTimeout(()=>{
+      for (const b of gained) {
+        toast(`🏅 Νέο badge: ${b.name}!`, 'success');
+      }
+      confetti();
+    }, 800);
+  }
+}
+function addXP(n) {
+  const prevLv = S.level;
+  S.xp += n; S.coins += Math.floor(n/2);
+  S.level = levelForXp(S.xp);
+  save();
+  if (S.level > prevLv) {
+    setTimeout(()=>{ toast(`🎉 Level Up! Επίπεδο ${S.level}`, 'success'); confetti(); }, 400);
+  }
+}
+function recordAnswer(qId, correct, cat, responseMs) {
+  updateStreak();
+  S.totalAnswered++;
+  S.responseTimes.push(responseMs);
+  if (S.responseTimes.length > 200) S.responseTimes.shift();
+  if (correct) { S.totalCorrect++; S.catCorrect[cat]=(S.catCorrect[cat]||0)+1; addXP(10); }
+  else         { S.totalWrong++;   S.catWrong[cat]=(S.catWrong[cat]||0)+1;   if (!S.mistakes.includes(qId)) S.mistakes.push(qId); addXP(3); }
+  // Spaced repetition (Leitner)
+  const m = S.mastery[qId] || { level:'new', streak:0, nextDue:0 };
+  if (correct) {
+    m.streak++;
+    if (m.streak >= 4) m.level='mastered';
+    else if (m.streak >= 2) m.level='improving';
+    else m.level='learning';
+    m.nextDue = Date.now() + [1,3,7,14,30][Math.min(4,m.streak)]*24*3600*1000;
+    if (m.level === 'mastered') { S.mistakes = S.mistakes.filter(x=>x!==qId); }
+  } else {
+    m.streak = 0; m.level='learning'; m.nextDue = Date.now();
+  }
+  S.mastery[qId] = m;
+  // History bucket for today
+  const today = todayStr();
+  let h = S.history.find(x=>x.date===today);
+  if (!h) { h={date:today,correct:0,wrong:0}; S.history.push(h); if (S.history.length>60) S.history.shift(); }
+  correct ? h.correct++ : h.wrong++;
+  // Daily challenge
+  if (S.dailyChallenge && !S.dailyChallenge.done) {
+    const dc = S.dailyChallenge;
+    if (dc.type === 'answer') dc.progress++;
+    if (dc.type === 'correct' && correct) dc.progress++;
+    if (dc.progress >= dc.target && dc.type !== 'accuracy' && dc.type !== 'exam') { dc.done=true; addXP(50); toast('🎁 Ημερήσια πρόκληση: +50 XP!', 'success'); }
+  }
+  save();
+  checkBadges();
+}
+
+/* ========================= ROUTER ========================= */
+const routes = {};
+let currentRoute = 'dashboard';
+function route(name, params={}) {
+  currentRoute = name;
+  window.scrollTo(0,0);
+  $('#app').innerHTML = '';
+  const fn = routes[name] || routes.dashboard;
+  $('#app').appendChild(fn(params));
+}
+
+/* ========================= SHELL / LAYOUT ========================= */
+function shell(content) {
+  const wrap = el(`<div class="min-h-screen"></div>`);
+  wrap.appendChild(topBar());
+  const main = el(`<main class="max-w-6xl mx-auto px-4 pt-6 pb-24"></main>`);
+  main.appendChild(content);
+  wrap.appendChild(main);
+  wrap.appendChild(bottomNav());
+  return wrap;
+}
+function topBar() {
+  const lvPct = Math.min(100, Math.round(((S.xp - xpForLevel(S.level-1)) / (xpForLevel(S.level) - xpForLevel(S.level-1))) * 100)) || 0;
+  const bar = el(`
+    <header class="sticky top-0 z-40 glass border-b border-white/40 dark:border-white/10">
+      <div class="max-w-6xl mx-auto px-4 py-3 flex items-center gap-3">
+        <button id="brandBtn" class="btn flex items-center gap-2 font-bold text-lg">
+          <div class="w-9 h-9 rounded-xl grad-primary flex items-center justify-center text-white text-lg">🚗</div>
+          <span class="hidden sm:inline">DrivePro <span class="text-slate-400 font-normal">GR</span></span>
+        </button>
+        <div class="ml-auto flex items-center gap-3">
+          <div class="hidden sm:flex items-center gap-2 bg-white/70 dark:bg-white/10 px-3 py-1.5 rounded-full text-sm font-medium">
+            <span>🔥</span><span>${S.streak} μέρες</span>
+          </div>
+          <div class="hidden sm:flex items-center gap-2 bg-white/70 dark:bg-white/10 px-3 py-1.5 rounded-full text-sm font-medium">
+            <span>🪙</span><span>${S.coins}</span>
+          </div>
+          <div class="flex items-center gap-2 bg-white/70 dark:bg-white/10 px-3 py-1.5 rounded-full text-sm font-medium">
+            <div class="relative w-7 h-7">
+              <svg viewBox="0 0 36 36" class="w-7 h-7 -rotate-90"><circle cx="18" cy="18" r="15" fill="none" stroke="#e5e7eb" stroke-width="4"/><circle cx="18" cy="18" r="15" fill="none" stroke="#5b7cff" stroke-width="4" stroke-linecap="round" stroke-dasharray="94" stroke-dashoffset="${94-94*lvPct/100}"/></svg>
+              <div class="absolute inset-0 flex items-center justify-center text-[10px] font-bold">${S.level}</div>
+            </div>
+            <span>${S.xp} XP</span>
+          </div>
+          <button id="themeBtn" class="btn w-10 h-10 rounded-full bg-white/70 dark:bg-white/10 flex items-center justify-center">${S.theme==='dark'?'☀️':'🌙'}</button>
+          <button id="profBtn" class="btn w-10 h-10 rounded-full grad-primary text-white flex items-center justify-center text-lg">${S.user.avatar}</button>
+        </div>
+      </div>
+    </header>`);
+  bar.querySelector('#brandBtn').onclick = () => route('dashboard');
+  bar.querySelector('#themeBtn').onclick = () => { S.theme = S.theme==='dark'?'light':'dark'; document.documentElement.classList.toggle('dark', S.theme==='dark'); save(); route(currentRoute); };
+  bar.querySelector('#profBtn').onclick = () => route('profile');
+  return bar;
+}
+function bottomNav() {
+  const items = [
+    { k:'dashboard', ic:'🏠', l:'Αρχική' },
+    { k:'learn',     ic:'📚', l:'Μάθηση' },
+    { k:'search',    ic:'🔎', l:'Αναζήτηση' },
+    { k:'stats',     ic:'📊', l:'Στατιστικά' },
+    { k:'profile',   ic:'👤', l:'Προφίλ' }
+  ];
+  const nav = el(`<nav class="fixed bottom-0 left-0 right-0 glass border-t border-white/40 dark:border-white/10 z-40">
+    <div class="max-w-6xl mx-auto grid grid-cols-5 py-2">${items.map(i=>`
+      <button data-k="${i.k}" class="btn flex flex-col items-center gap-1 py-1 ${currentRoute===i.k?'text-brand-600':'text-slate-500'}">
+        <span class="text-xl">${i.ic}</span>
+        <span class="text-[11px] font-medium">${i.l}</span>
+      </button>`).join('')}</div></nav>`);
+  nav.querySelectorAll('[data-k]').forEach(b => b.onclick = () => route(b.dataset.k));
+  return nav;
+}
+
+/* ========================= DASHBOARD ========================= */
+routes.dashboard = () => {
+  const accuracy = S.totalAnswered ? Math.round(100*S.totalCorrect/S.totalAnswered) : 0;
+  const cats = Object.keys(window.CATEGORIES);
+  const catAcc = cats.map(k => {
+    const c=(S.catCorrect[k]||0), w=(S.catWrong[k]||0), t=c+w;
+    return { k, name: window.CATEGORIES[k].name, icon: window.CATEGORIES[k].icon, color: window.CATEGORIES[k].color, acc: t?Math.round(100*c/t):null, total: t };
+  }).filter(x=>x.acc!==null);
+  const weakest = [...catAcc].sort((a,b)=>a.acc-b.acc).slice(0,3);
+  const strongest = [...catAcc].sort((a,b)=>b.acc-a.acc).slice(0,3);
+  ensureDailyChallenge();
+  const dc = S.dailyChallenge;
+  const dcPct = dc ? Math.min(100, Math.round(100*dc.progress/dc.target)) : 0;
+
+  const c = el(`<div class="space-y-5 animate-slide-up">
+    <section class="card shadow-soft p-6 grad-primary text-white overflow-hidden relative">
+      <div class="absolute -top-8 -right-8 text-[180px] opacity-10 select-none">🚗</div>
+      <div class="text-white/80 text-sm">Καλωσόρισες πίσω,</div>
+      <div class="text-2xl font-bold">${S.user.name} ${S.user.avatar}</div>
+      <div class="mt-3 flex flex-wrap gap-2">
+        <button data-go="exam" class="btn bg-white text-brand-600 font-semibold px-4 py-2 rounded-xl shadow">▶ Ξεκίνα Προσομοίωση</button>
+        <button data-go="practice" class="btn bg-white/20 border border-white/30 px-4 py-2 rounded-xl">📖 Practice</button>
+        <button data-go="mistakes" class="btn bg-white/20 border border-white/30 px-4 py-2 rounded-xl">🎯 Λάθη μου (${S.mistakes.length})</button>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${statCard('✅', 'Σωστές', S.totalCorrect, 'emerald')}
+      ${statCard('❌', 'Λάθος', S.totalWrong, 'rose')}
+      ${statCard('🎯', 'Ακρίβεια', accuracy+'%', 'brand')}
+      ${statCard('🔥', 'Streak', S.streak+' μέρες', 'amber')}
+    </section>
+
+    ${dc ? `<section class="card shadow-soft p-5">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <div class="text-xs text-slate-500 uppercase tracking-wider">Ημερήσια Πρόκληση</div>
+          <div class="font-semibold">${dc.label}</div>
+        </div>
+        <div class="text-2xl">${dc.done?'🎁':'⏳'}</div>
+      </div>
+      <div class="h-3 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
+        <div class="h-full grad-primary rounded-full transition-all" style="width:${dcPct}%"></div>
+      </div>
+      <div class="text-xs text-slate-500 mt-2">${dc.progress}/${dc.target}${dc.done?' — Ολοκληρώθηκε! +50 XP':''}</div>
+    </section>` : ''}
+
+    <section class="grid md:grid-cols-2 gap-4">
+      <div class="card shadow-soft p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-bold">🌱 Χρειάζεσαι εξάσκηση</h3>
+          <button data-go="stats" class="text-xs text-brand-600">Όλες →</button>
+        </div>
+        ${weakest.length ? weakest.map(w=>catRow(w)).join('') : '<p class="text-sm text-slate-500">Ξεκίνα εξάσκηση για να δεις προτάσεις.</p>'}
+      </div>
+      <div class="card shadow-soft p-5">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="font-bold">🏆 Τα δυνατά σου</h3>
+          <button data-go="stats" class="text-xs text-brand-600">Όλες →</button>
+        </div>
+        ${strongest.length ? strongest.map(w=>catRow(w)).join('') : '<p class="text-sm text-slate-500">Δεν υπάρχουν ακόμη δεδομένα.</p>'}
+      </div>
+    </section>
+
+    <section class="card shadow-soft p-5">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-bold">🎓 Τρόποι Μάθησης</h3>
+      </div>
+      <div class="grid sm:grid-cols-2 lg:grid-cols-4 gap-3">
+        ${modeCard('exam','📝','Επίσημη Εξέταση','30 ερωτήσεις, με χρονόμετρο','#5b7cff')}
+        ${modeCard('practice','📖','Ελεύθερη Εξάσκηση','Χωρίς πίεση, χωρίς όριο','#10b981')}
+        ${modeCard('mistakes','🎯','Τα Λάθη μου','Επανάληψη μέσω spaced repetition','#f59e0b')}
+        ${modeCard('categories','🗂️','Κατά Κατηγορία','Επίλεξε ενότητα να μελετήσεις','#8b5cf6')}
+      </div>
+    </section>
+
+    ${S.badges.length ? `<section class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">🏅 Τα Badges σου (${S.badges.length}/${window.BADGES.length})</h3>
+      <div class="flex flex-wrap gap-2">
+        ${S.badges.map(id=>{const b=window.BADGES.find(x=>x.id===id);return `<div title="${b.desc}" class="bg-amber-100 dark:bg-amber-500/20 px-3 py-2 rounded-xl text-sm flex items-center gap-2"><span class="text-lg">${b.icon}</span><span class="font-medium">${b.name}</span></div>`;}).join('')}
+      </div>
+    </section>` : ''}
+  </div>`);
+
+  c.querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+    const t = b.dataset.go;
+    if (t==='exam') startExam();
+    else if (t==='practice') startPractice();
+    else if (t==='mistakes') startMistakes();
+    else route(t);
+  });
+  return shell(c);
+};
+function statCard(icon, label, val, tone) {
+  const tones = { emerald:'from-emerald-400 to-emerald-600', rose:'from-rose-400 to-rose-600', brand:'from-brand-500 to-indigo-500', amber:'from-amber-400 to-orange-500' };
+  return `<div class="card shadow-soft p-4 relative overflow-hidden">
+    <div class="text-3xl">${icon}</div>
+    <div class="text-xs text-slate-500 mt-1">${label}</div>
+    <div class="text-2xl font-bold bg-gradient-to-br ${tones[tone]} bg-clip-text text-transparent">${val}</div>
+  </div>`;
+}
+function catRow(w) {
+  return `<div class="flex items-center gap-3 py-2">
+    <div class="w-9 h-9 rounded-lg flex items-center justify-center text-lg" style="background:${w.color}22;color:${w.color}">${w.icon}</div>
+    <div class="flex-1">
+      <div class="text-sm font-medium">${w.name}</div>
+      <div class="h-1.5 mt-1 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
+        <div class="h-full rounded-full" style="width:${w.acc}%;background:${w.color}"></div>
+      </div>
+    </div>
+    <div class="text-sm font-semibold">${w.acc}%</div>
+  </div>`;
+}
+function modeCard(k, ic, title, sub, color) {
+  return `<button data-go="${k}" class="btn text-left card p-4 hover:shadow-glow transition" style="border:2px solid ${color}22">
+    <div class="w-10 h-10 rounded-xl flex items-center justify-center text-xl mb-2" style="background:${color}22;color:${color}">${ic}</div>
+    <div class="font-semibold">${title}</div>
+    <div class="text-xs text-slate-500 mt-1">${sub}</div>
+  </button>`;
+}
+
+/* ========================= LEARN MENU ========================= */
+routes.learn = () => {
+  const c = el(`<div class="space-y-5 animate-slide-up">
+    <h1 class="text-2xl font-bold">Τρόποι Μάθησης</h1>
+    <div class="grid sm:grid-cols-2 gap-4">
+      ${modeCard('exam','📝','Επίσημη Εξέταση','30 ερωτήσεις, χρονόμετρο 30 λεπτά','#5b7cff')}
+      ${modeCard('practice','📖','Ελεύθερη Εξάσκηση','Απεριόριστες ερωτήσεις','#10b981')}
+      ${modeCard('mistakes','🎯','Λάθη + Επανάληψη','Spaced repetition για τα λάθη σου','#f59e0b')}
+      ${modeCard('categories','🗂️','Κατά Κατηγορία','Πινακίδες, προτεραιότητα, ...','#8b5cf6')}
+    </div>
+    <div class="card p-4 shadow-soft text-sm text-slate-600 dark:text-slate-300">
+      💡 <b>Συμβουλή:</b> Ξεκίνα με «Κατά Κατηγορία» για να μάθεις τους κανόνες, μετά «Ελεύθερη» για επανάληψη, και δώσε «Προσομοίωση» όταν νιώθεις έτοιμος.
+    </div>
+  </div>`);
+  c.querySelectorAll('[data-go]').forEach(b => b.onclick = () => {
+    const t=b.dataset.go;
+    if (t==='exam') startExam();
+    else if (t==='practice') startPractice();
+    else if (t==='mistakes') startMistakes();
+    else if (t==='categories') route('categories');
+  });
+  return shell(c);
+};
+
+/* ========================= CATEGORIES ========================= */
+routes.categories = () => {
+  const cats = Object.entries(window.CATEGORIES);
+  const c = el(`<div class="space-y-5 animate-slide-up">
+    <h1 class="text-2xl font-bold">Επίλεξε Κατηγορία</h1>
+    <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      ${cats.map(([k,v])=>{
+        const count = window.QUESTIONS.filter(q=>q.cat===k).length;
+        const correct = S.catCorrect[k]||0, wrong = S.catWrong[k]||0, total = correct+wrong;
+        const acc = total ? Math.round(100*correct/total) : null;
+        return `<button data-cat="${k}" class="btn card p-4 text-left hover:shadow-glow transition" style="border:2px solid ${v.color}22">
+          <div class="flex items-center gap-3 mb-2">
+            <div class="w-11 h-11 rounded-xl flex items-center justify-center text-2xl" style="background:${v.color}22;color:${v.color}">${v.icon}</div>
+            <div>
+              <div class="font-semibold">${v.name}</div>
+              <div class="text-xs text-slate-500">${count} ερωτήσεις</div>
+            </div>
+          </div>
+          ${acc!==null ? `<div class="h-1.5 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden"><div class="h-full" style="width:${acc}%;background:${v.color}"></div></div><div class="text-xs mt-1 text-slate-500">Ακρίβεια: ${acc}%</div>` : '<div class="text-xs text-slate-400">Δεν έχεις δοκιμάσει ακόμη</div>'}
+        </button>`;
+      }).join('')}
+    </div>
+  </div>`);
+  c.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => startCategory(b.dataset.cat));
+  return shell(c);
+};
+
+/* ========================= QUIZ SESSION ========================= */
+let SESSION = null;
+function startExam()      { const qs = shuffle(window.QUESTIONS.slice()).slice(0,30); SESSION={mode:'exam',qs,i:0,answers:[],start:Date.now(),timer: 30*60}; route('quiz'); }
+function startPractice()  { const qs = shuffle(window.QUESTIONS.slice()); SESSION={mode:'practice',qs,i:0,answers:[],start:Date.now()}; route('quiz'); }
+function startMistakes()  {
+  let pool = S.mistakes.map(id => window.QUESTIONS.find(q=>q.id===id)).filter(Boolean);
+  if (!pool.length) { toast('Δεν έχεις λάθη ακόμη! Ξεκίνα με Practice.', 'info'); return; }
+  // Weight: less-mastered questions appear more often
+  const weighted = [];
+  for (const q of pool) {
+    const m = S.mastery[q.id] || {level:'new'};
+    const w = { new:5, learning:4, improving:2, mastered:1 }[m.level] || 3;
+    for (let i=0;i<w;i++) weighted.push(q);
+  }
+  SESSION={mode:'mistakes',qs:shuffle(weighted).slice(0,20),i:0,answers:[],start:Date.now()};
+  route('quiz');
+}
+function startCategory(cat){
+  const qs = shuffle(window.QUESTIONS.filter(q=>q.cat===cat));
+  if (!qs.length) { toast('Δεν υπάρχουν ερωτήσεις σε αυτή την κατηγορία.'); return; }
+  SESSION={mode:'category',cat,qs,i:0,answers:[],start:Date.now()};
+  route('quiz');
+}
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+
+let questionStart = 0;
+let timerInterval = null;
+routes.quiz = () => {
+  if (!SESSION) { route('dashboard'); return el('<div/>'); }
+  if (SESSION.i >= SESSION.qs.length) { return shell(resultScreen()); }
+  const q = SESSION.qs[SESSION.i];
+  questionStart = Date.now();
+  const cat = window.CATEGORIES[q.cat];
+  const isBookmarked = S.bookmarks.includes(q.id);
+  const total = SESSION.qs.length;
+  const pct = Math.round(100 * SESSION.i / total);
+  const modeLabel = { exam:'Προσομοίωση', practice:'Εξάσκηση', mistakes:'Επανάληψη Λαθών', category: (cat?.name||'Κατηγορία') }[SESSION.mode];
+
+  const c = el(`<div class="max-w-2xl mx-auto space-y-4 animate-slide-up">
+    <div class="flex items-center gap-2 text-sm">
+      <button id="quitBtn" class="btn text-slate-500">← Έξοδος</button>
+      <span class="text-slate-400">·</span>
+      <span class="font-medium">${modeLabel}</span>
+      <span class="text-slate-400">·</span>
+      <span class="text-slate-500">${SESSION.i+1} / ${total}</span>
+      ${SESSION.mode==='exam' ? `<span class="ml-auto font-mono font-semibold text-brand-600" id="timerBox">30:00</span>` : `<span class="ml-auto"></span>`}
+      <button id="bookmarkBtn" class="btn text-xl">${isBookmarked?'⭐':'☆'}</button>
+    </div>
+    <div class="h-2 bg-slate-100 dark:bg-white/10 rounded-full overflow-hidden">
+      <div class="h-full grad-primary rounded-full transition-all" style="width:${pct}%"></div>
+    </div>
+    <div class="card shadow-soft p-5 md:p-7 animate-pop">
+      <div class="flex items-center gap-2 mb-3">
+        <span class="px-2 py-0.5 rounded-full text-xs font-semibold" style="background:${cat.color}22;color:${cat.color}">${cat.icon} ${cat.name}</span>
+        ${S.mastery[q.id] ? `<span class="text-xs text-slate-500">· ${masteryLabel(S.mastery[q.id].level)}</span>` : ''}
+      </div>
+      <h2 class="text-xl md:text-2xl font-bold leading-snug">${q.q}</h2>
+      <div class="mt-5 grid gap-2.5" id="optsBox">
+        ${q.options.map((opt,i)=>`
+          <button data-i="${i}" class="opt-btn w-full text-left px-4 py-3.5 rounded-2xl border-2 border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 font-medium flex items-center gap-3">
+            <span class="w-8 h-8 rounded-lg bg-slate-100 dark:bg-white/10 flex items-center justify-center font-bold">${String.fromCharCode(65+i)}</span>
+            <span class="flex-1">${opt}</span>
+          </button>`).join('')}
+      </div>
+      <div id="explainBox" class="mt-4 hidden"></div>
+    </div>
+  </div>`);
+
+  c.querySelector('#quitBtn').onclick = () => {
+    if (SESSION.mode==='exam' && !confirm('Έξοδος από την προσομοίωση; Η πρόοδος θα χαθεί.')) return;
+    if (timerInterval) clearInterval(timerInterval);
+    SESSION=null; route('dashboard');
+  };
+  c.querySelector('#bookmarkBtn').onclick = (e) => {
+    if (S.bookmarks.includes(q.id)) S.bookmarks = S.bookmarks.filter(x=>x!==q.id);
+    else S.bookmarks.push(q.id);
+    save(); e.currentTarget.textContent = S.bookmarks.includes(q.id) ? '⭐':'☆';
+  };
+  c.querySelectorAll('.opt-btn').forEach(b => b.onclick = () => onAnswer(c, q, parseInt(b.dataset.i)));
+
+  if (SESSION.mode==='exam') {
+    if (timerInterval) clearInterval(timerInterval);
+    timerInterval = setInterval(()=>{
+      SESSION.timer--;
+      const tb = document.getElementById('timerBox');
+      if (!tb) { clearInterval(timerInterval); return; }
+      const m = Math.floor(SESSION.timer/60), s = SESSION.timer%60;
+      tb.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      if (SESSION.timer <= 60) tb.classList.add('text-rose-600','animate-bounce-slow');
+      if (SESSION.timer <= 0) { clearInterval(timerInterval); SESSION.i = SESSION.qs.length; route('quiz'); }
+    }, 1000);
+  }
+  return shell(c);
+};
+function masteryLabel(lv){ return {new:'🆕 Νέα', learning:'📖 Μαθαίνεις', improving:'📈 Βελτιώνεσαι', mastered:'✨ Master'}[lv]||lv; }
+
+function onAnswer(root, q, pick) {
+  const responseMs = Date.now() - questionStart;
+  const correct = pick === q.correct;
+  const opts = root.querySelectorAll('.opt-btn');
+  opts.forEach((b,i)=>{
+    b.disabled = true;
+    if (i===q.correct) b.classList.add('!border-emerald-500','bg-emerald-50','dark:bg-emerald-500/10');
+    if (i===pick && !correct) b.classList.add('!border-rose-500','bg-rose-50','dark:bg-rose-500/10','animate-shake');
+  });
+  const cat = window.CATEGORIES[q.cat];
+  const box = root.querySelector('#explainBox');
+  box.classList.remove('hidden');
+  box.innerHTML = `
+    <div class="rounded-2xl p-4 ${correct?'bg-emerald-50 dark:bg-emerald-500/10 border-2 border-emerald-200 dark:border-emerald-500/30':'bg-rose-50 dark:bg-rose-500/10 border-2 border-rose-200 dark:border-rose-500/30'} animate-slide-up">
+      <div class="flex items-center gap-2 font-bold text-lg ${correct?'text-emerald-700 dark:text-emerald-300':'text-rose-700 dark:text-rose-300'}">
+        ${correct?'✅ Σωστά! +10 XP':'❌ Λάθος'}
+      </div>
+      ${!correct ? `<div class="mt-1 text-sm"><b>Η σωστή απάντηση είναι:</b> ${q.options[q.correct]}</div>` : ''}
+      <div class="mt-3 text-sm leading-relaxed">${q.explain}</div>
+      ${q.tip ? `<div class="mt-3 p-3 rounded-xl bg-white/70 dark:bg-white/5 border border-white/60 dark:border-white/10 text-sm">💡 <b>Μνημονικός κανόνας:</b> ${q.tip}</div>` : ''}
+      <div class="mt-4 flex gap-2">
+        <button id="nextBtn" class="btn grad-primary text-white px-5 py-2.5 rounded-xl font-semibold">${SESSION.i+1===SESSION.qs.length?'Δες αποτελέσματα →':'Επόμενη →'}</button>
+        ${SESSION.mode!=='exam'?`<button id="againBtn" class="btn bg-slate-100 dark:bg-white/10 px-4 py-2.5 rounded-xl">Άλλη τυχαία</button>`:''}
+      </div>
+    </div>`;
+  SESSION.answers.push({qId:q.id, pick, correct, responseMs});
+  recordAnswer(q.id, correct, q.cat, responseMs);
+  box.querySelector('#nextBtn').onclick = () => { SESSION.i++; route('quiz'); };
+  const again = box.querySelector('#againBtn');
+  if (again) again.onclick = () => { startPractice(); };
+}
+
+function resultScreen() {
+  if (timerInterval) clearInterval(timerInterval);
+  const total = SESSION.answers.length;
+  const correct = SESSION.answers.filter(a=>a.correct).length;
+  const pct = total?Math.round(100*correct/total):0;
+  const passed = SESSION.mode!=='exam' ? true : pct >= 85;
+  if (SESSION.mode==='exam') {
+    S.examsCompleted++;
+    if (pct===100) S.perfectExams++;
+    if (S.dailyChallenge && S.dailyChallenge.type==='exam' && !S.dailyChallenge.done) { S.dailyChallenge.progress++; if (S.dailyChallenge.progress>=S.dailyChallenge.target){S.dailyChallenge.done=true; addXP(50); toast('🎁 Ημερήσια πρόκληση ολοκληρώθηκε!', 'success'); } }
+    if (S.dailyChallenge && S.dailyChallenge.type==='accuracy' && pct >= S.dailyChallenge.target && !S.dailyChallenge.done){ S.dailyChallenge.done=true; addXP(50); toast('🎁 Ημερήσια πρόκληση!', 'success'); }
+    save(); checkBadges();
+  }
+  if (passed && SESSION.mode==='exam') setTimeout(confetti, 200);
+  const wrongList = SESSION.answers.filter(a=>!a.correct);
+  const c = el(`<div class="max-w-2xl mx-auto space-y-4 animate-slide-up">
+    <div class="card shadow-soft p-7 text-center ${passed?'grad-success':'grad-danger'} text-white">
+      <div class="text-6xl mb-2">${passed?(pct===100?'🏆':'🎉'):'💪'}</div>
+      <div class="text-3xl font-bold">${pct}%</div>
+      <div class="mt-1 opacity-90">${correct}/${total} σωστές</div>
+      ${SESSION.mode==='exam'?`<div class="mt-3 inline-block bg-white/20 px-4 py-1.5 rounded-full text-sm font-medium">${passed?'✅ Πέρασες την προσομοίωση!':'Χρειάζεσαι 85%+ για να περάσεις — συνέχισε!'}</div>`:''}
+    </div>
+    ${wrongList.length ? `<div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">📌 Ερωτήσεις προς επανάληψη (${wrongList.length})</h3>
+      <div class="space-y-2 max-h-72 overflow-y-auto no-scrollbar">
+        ${wrongList.map(a=>{const q=window.QUESTIONS.find(x=>x.id===a.qId);return `<div class="p-3 rounded-xl bg-slate-50 dark:bg-white/5 text-sm"><div class="font-medium">${q.q}</div><div class="text-xs text-emerald-600 mt-1">✓ ${q.options[q.correct]}</div></div>`;}).join('')}
+      </div>
+    </div>` : ''}
+    <div class="flex gap-2">
+      <button id="againBtn" class="btn flex-1 grad-primary text-white py-3 rounded-2xl font-semibold">Ξανά</button>
+      <button id="homeBtn" class="btn flex-1 bg-slate-100 dark:bg-white/10 py-3 rounded-2xl font-semibold">Αρχική</button>
+    </div>
+  </div>`);
+  c.querySelector('#againBtn').onclick = () => {
+    const m = SESSION.mode; const cat = SESSION.cat;
+    if (m==='exam') startExam(); else if (m==='practice') startPractice(); else if (m==='mistakes') startMistakes(); else if (m==='category') startCategory(cat);
+  };
+  c.querySelector('#homeBtn').onclick = () => { SESSION=null; route('dashboard'); };
+  return c;
+}
+
+/* ========================= SEARCH ========================= */
+routes.search = () => {
+  const c = el(`<div class="space-y-4 animate-slide-up">
+    <h1 class="text-2xl font-bold">🔎 Αναζήτηση</h1>
+    <input id="qInput" placeholder="Αναζήτησε ερώτηση, λέξη-κλειδί, ή κατηγορία..." class="w-full px-5 py-4 rounded-2xl border-2 border-slate-200 dark:border-white/10 bg-white dark:bg-white/5 focus:border-brand-500 focus:outline-none text-lg">
+    <div id="results" class="space-y-2"></div>
+    ${S.bookmarks.length ? `<div class="card p-5 shadow-soft"><h3 class="font-bold mb-2">⭐ Αγαπημένα (${S.bookmarks.length})</h3><div class="space-y-2">${S.bookmarks.map(id=>{const q=window.QUESTIONS.find(x=>x.id===id);return q?searchRow(q):'';}).join('')}</div></div>` : ''}
+  </div>`);
+  const inp = c.querySelector('#qInput');
+  const res = c.querySelector('#results');
+  const render = (term) => {
+    if (!term) { res.innerHTML=''; return; }
+    const t = term.toLowerCase();
+    const hits = window.QUESTIONS.filter(q =>
+      q.q.toLowerCase().includes(t) ||
+      q.options.some(o=>o.toLowerCase().includes(t)) ||
+      (window.CATEGORIES[q.cat].name.toLowerCase().includes(t))
+    ).slice(0,30);
+    res.innerHTML = hits.length ? `<div class="text-sm text-slate-500 mb-1">${hits.length} αποτελέσματα</div>` + hits.map(searchRow).join('') : '<p class="text-slate-500 text-sm">Δεν βρέθηκαν αποτελέσματα.</p>';
+  };
+  inp.oninput = () => render(inp.value);
+  return shell(c);
+};
+function searchRow(q) {
+  const cat = window.CATEGORIES[q.cat];
+  return `<div class="card p-4 shadow-soft hover:shadow-glow transition">
+    <div class="flex items-center gap-2 text-xs mb-1"><span class="px-2 py-0.5 rounded-full font-semibold" style="background:${cat.color}22;color:${cat.color}">${cat.icon} ${cat.name}</span></div>
+    <div class="font-medium">${q.q}</div>
+    <div class="text-xs text-emerald-600 mt-1">✓ ${q.options[q.correct]}</div>
+  </div>`;
+}
+
+/* ========================= STATS ========================= */
+routes.stats = () => {
+  const accuracy = S.totalAnswered ? Math.round(100*S.totalCorrect/S.totalAnswered) : 0;
+  const avgResp = S.responseTimes.length ? (S.responseTimes.reduce((a,b)=>a+b,0)/S.responseTimes.length/1000).toFixed(1) : '—';
+  const c = el(`<div class="space-y-5 animate-slide-up">
+    <h1 class="text-2xl font-bold">📊 Στατιστικά</h1>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+      ${statCard('📚','Απαντήσεις',S.totalAnswered,'brand')}
+      ${statCard('🎯','Ακρίβεια',accuracy+'%','emerald')}
+      ${statCard('⏱️','Μ.Ο. χρόνος',avgResp+' s','amber')}
+      ${statCard('🔥','Longest streak',S.longestStreak+' μέρες','rose')}
+    </div>
+    <div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">Πρόοδος τελευταίων ημερών</h3>
+      <canvas id="lineChart" height="80"></canvas>
+    </div>
+    <div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">Ακρίβεια ανά κατηγορία</h3>
+      <canvas id="barChart" height="120"></canvas>
+    </div>
+    <div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">🏅 Badges (${S.badges.length}/${window.BADGES.length})</h3>
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+        ${window.BADGES.map(b=>{const got=S.badges.includes(b.id); return `<div class="p-3 rounded-xl text-center ${got?'bg-amber-100 dark:bg-amber-500/20':'bg-slate-100 dark:bg-white/5 opacity-40'}"><div class="text-3xl">${b.icon}</div><div class="text-xs font-semibold mt-1">${b.name}</div><div class="text-[10px] text-slate-500 mt-0.5">${b.desc}</div></div>`;}).join('')}
+      </div>
+    </div>
+  </div>`);
+  setTimeout(()=>{
+    const isDark = S.theme==='dark';
+    const grid = isDark ? 'rgba(255,255,255,.08)' : 'rgba(0,0,0,.06)';
+    const tick = isDark ? '#cbd5e1' : '#64748b';
+    // Line
+    const days = S.history.slice(-14);
+    new Chart($('#lineChart'), {
+      type:'line',
+      data:{
+        labels: days.map(d=>d.date.slice(5)),
+        datasets:[
+          {label:'Σωστές', data:days.map(d=>d.correct), borderColor:'#10b981', backgroundColor:'rgba(16,185,129,.15)', tension:.35, fill:true},
+          {label:'Λάθος', data:days.map(d=>d.wrong), borderColor:'#ef4444', backgroundColor:'rgba(239,68,68,.15)', tension:.35, fill:true}
+        ]
+      },
+      options:{ responsive:true, plugins:{legend:{labels:{color:tick}}}, scales:{x:{grid:{color:grid},ticks:{color:tick}}, y:{grid:{color:grid},ticks:{color:tick}}} }
+    });
+    // Bar
+    const cats = Object.keys(window.CATEGORIES);
+    const labels = cats.map(k=>window.CATEGORIES[k].name);
+    const values = cats.map(k=>{const c=S.catCorrect[k]||0,w=S.catWrong[k]||0,t=c+w;return t?Math.round(100*c/t):0;});
+    const colors = cats.map(k=>window.CATEGORIES[k].color);
+    new Chart($('#barChart'), {
+      type:'bar',
+      data:{ labels, datasets:[{ label:'Ακρίβεια %', data:values, backgroundColor:colors.map(c=>c+'cc'), borderRadius:8 }] },
+      options:{ responsive:true, plugins:{legend:{display:false}}, scales:{x:{grid:{display:false},ticks:{color:tick}}, y:{max:100,grid:{color:grid},ticks:{color:tick}}} }
+    });
+  }, 30);
+  return shell(c);
+};
+
+/* ========================= PROFILE ========================= */
+routes.profile = () => {
+  const avatars = ['🧑','👩','🧑‍🦱','👨‍🦰','👩‍🦳','🧑‍🎓','🦸','🧙','🚗','🏎️'];
+  const c = el(`<div class="max-w-xl mx-auto space-y-5 animate-slide-up">
+    <div class="card shadow-soft p-6 text-center">
+      <div class="text-7xl mb-3 animate-float">${S.user.avatar}</div>
+      <input id="nameInp" value="${S.user.name}" class="text-center text-2xl font-bold bg-transparent border-b-2 border-transparent focus:border-brand-500 outline-none">
+      <div class="text-sm text-slate-500 mt-1">${S.user.mode==='guest'?'Χρήστης - Επισκέπτης':'Συνδεδεμένος'}</div>
+      <div class="grid grid-cols-3 gap-3 mt-5">
+        <div><div class="text-2xl font-bold text-brand-600">${S.level}</div><div class="text-xs text-slate-500">Επίπεδο</div></div>
+        <div><div class="text-2xl font-bold text-amber-500">${S.xp}</div><div class="text-xs text-slate-500">XP</div></div>
+        <div><div class="text-2xl font-bold text-rose-500">${S.streak}</div><div class="text-xs text-slate-500">Streak</div></div>
+      </div>
+    </div>
+
+    <div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">Άβαταρ</h3>
+      <div class="flex flex-wrap gap-2">${avatars.map(a=>`<button data-a="${a}" class="btn w-12 h-12 rounded-xl text-2xl ${S.user.avatar===a?'grad-primary':'bg-slate-100 dark:bg-white/10'}">${a}</button>`).join('')}</div>
+    </div>
+
+    <div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3">Σύνδεση</h3>
+      <p class="text-sm text-slate-500 mb-3">Ως επισκέπτης, η πρόοδός σου αποθηκεύεται τοπικά σε αυτήν τη συσκευή. Δημιούργησε λογαριασμό για να μεταφέρεις την πρόοδο σε άλλες συσκευές.</p>
+      <div class="grid gap-2">
+        <button id="googleBtn" class="btn w-full py-3 rounded-xl bg-white border-2 border-slate-200 dark:border-white/10 font-medium flex items-center justify-center gap-3">
+          <svg width="20" height="20" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.4 29.3 35.5 24 35.5c-6.4 0-11.5-5.1-11.5-11.5S17.6 12.5 24 12.5c2.9 0 5.6 1.1 7.6 2.9l5.7-5.7C33.6 6.2 29 4.5 24 4.5 13.2 4.5 4.5 13.2 4.5 24S13.2 43.5 24 43.5 43.5 34.8 43.5 24c0-1.2-.1-2.4-.3-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.7 19 12.5 24 12.5c2.9 0 5.6 1.1 7.6 2.9l5.7-5.7C33.6 6.2 29 4.5 24 4.5c-7.4 0-13.7 4-17.7 10.2z"/><path fill="#4CAF50" d="M24 43.5c5 0 9.5-1.6 12.9-4.4l-6-4.9c-1.8 1.2-4.1 2-6.9 2-5.3 0-9.7-3.1-11.3-7.5l-6.6 5.1C9.7 39.4 16.3 43.5 24 43.5z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.3 4.1-4.3 5.5l6 4.9c-.4.4 6.5-4.7 6.5-14.4 0-1.2-.1-2.4-.3-3.5z"/></svg>
+          Σύνδεση με Google
+        </button>
+        <button id="emailBtn" class="btn w-full py-3 rounded-xl bg-white border-2 border-slate-200 dark:border-white/10 font-medium">✉️ Εγγραφή με Email</button>
+      </div>
+      <p class="text-xs text-slate-400 mt-3">💡 Σε production Next.js + Supabase, αυτά τα κουμπιά ενεργοποιούν πραγματικό OAuth flow.</p>
+    </div>
+
+    <div class="card shadow-soft p-5">
+      <h3 class="font-bold mb-3 text-rose-600">Ζώνη προσοχής</h3>
+      <button id="resetBtn" class="btn w-full py-3 rounded-xl bg-rose-50 dark:bg-rose-500/10 text-rose-600 font-semibold">🗑 Επαναφορά όλης της προόδου</button>
+    </div>
+  </div>`);
+  c.querySelector('#nameInp').onchange = e => { S.user.name = e.target.value.trim() || 'Επισκέπτης'; save(); };
+  c.querySelectorAll('[data-a]').forEach(b => b.onclick = () => { S.user.avatar = b.dataset.a; save(); route('profile'); });
+  c.querySelector('#googleBtn').onclick = () => toast('Το Google OAuth ενεργοποιείται μόνο στο Next.js/Supabase build.', 'info');
+  c.querySelector('#emailBtn').onclick = () => toast('Η εγγραφή Email ενεργοποιείται στο Next.js/Supabase build.', 'info');
+  c.querySelector('#resetBtn').onclick = () => { if (confirm('Σίγουρα; Θα διαγραφούν όλα τα δεδομένα προόδου.')) reset(); };
+  return shell(c);
+};
+
+/* ========================= INIT ========================= */
+document.documentElement.classList.toggle('dark', S.theme==='dark');
+ensureDailyChallenge();
+route('dashboard');
+</script>
+</body>
+</html>
