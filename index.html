@@ -72,6 +72,13 @@ tailwind.config = {
 <div id="modal-root"></div>
 
 <script src="questions.js"></script>
+<script src="questions_extra.js"></script>
+<script>
+  // Merge auto-extracted official questions from PDF
+  if (window.QUESTIONS_EXTRA && Array.isArray(window.QUESTIONS_EXTRA)) {
+    window.QUESTIONS = window.QUESTIONS.concat(window.QUESTIONS_EXTRA);
+  }
+</script>
 <script>
 /* ========================= STATE ========================= */
 const STORAGE_KEY = 'drivepro_state_v1';
