@@ -523,6 +523,7 @@ routes.quiz = () => {
         ${S.mastery[q.id] ? `<span class="text-xs text-slate-500">· ${masteryLabel(S.mastery[q.id].level)}</span>` : ''}
       </div>
       <h2 class="text-xl md:text-2xl font-bold leading-snug">${q.q}</h2>
+      <p class="mt-2 text-xs text-slate-400 dark:text-slate-500">👇 Πάτα την απάντηση που θεωρείς σωστή</p>
       ${q.images && q.images.length ? `<div class="mt-4 flex gap-2 flex-wrap justify-center bg-slate-50 dark:bg-white/5 rounded-2xl p-3">
         ${q.images.map(src => `<img src="images/${src}" alt="Εικόνα ερώτησης" class="max-h-56 rounded-xl shadow-soft bg-white object-contain" onerror="this.style.display='none'"/>`).join('')}
       </div>` : ''}
