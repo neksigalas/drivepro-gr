@@ -603,7 +603,9 @@ function resultScreen() {
   const total = SESSION.answers.length;
   const correct = SESSION.answers.filter(a=>a.correct).length;
   const pct = total?Math.round(100*correct/total):0;
-  const passed = SESSION.mode!=='exam' ? true : pct >= 85;
+  // Επίσημος κανόνας ΥΜΕ: επιτυχία εάν το πολύ 1 λάθος (29/30 σωστές για standard εξέταση)
+  const wrong = total - correct;
+  const passed = SESSION.mode!=='exam' ? true : (wrong <= 1);
   if (SESSION.mode==='exam') {
     S.examsCompleted++;
     if (pct===100) S.perfectExams++;
@@ -618,7 +620,7 @@ function resultScreen() {
       <div class="text-6xl mb-2">${passed?(pct===100?'🏆':'🎉'):'💪'}</div>
       <div class="text-3xl font-bold">${pct}%</div>
       <div class="mt-1 opacity-90">${correct}/${total} σωστές</div>
-      ${SESSION.mode==='exam'?`<div class="mt-3 inline-block bg-white/20 px-4 py-1.5 rounded-full text-sm font-medium">${passed?'✅ Πέρασες την προσομοίωση!':'Χρειάζεσαι 85%+ για να περάσεις — συνέχισε!'}</div>`:''}
+      ${SESSION.mode==='exam'?`<div class="mt-3 inline-block bg-white/20 px-4 py-1.5 rounded-full text-sm font-medium">${passed?`✅ Επιτυχής προσομοίωση! (${correct}/${total})`:`Επιτρέπεται το πολύ 1 λάθος (${wrong} λάθη) — συνέχισε!`}</div>`:''}
     </div>
     ${wrongList.length ? `<div class="card shadow-soft p-5">
       <h3 class="font-bold mb-3">📌 Ερωτήσεις προς επανάληψη (${wrongList.length})</h3>
